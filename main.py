@@ -14,15 +14,24 @@ parser.add_argument(
     help="Si se usa esta flag se calcula tambien frecuencia respecto al angulo"
 )
 parser.add_argument(
+    '-t', '--thickness', 
+    action='store_true',
+    help="Si se usa esta flag se cambia el grosor por el que este en la entrada 'thickness' del .csv"
+)
+parser.add_argument(
     '-f', '--formula', 
     type=str, 
     nargs='+',
     default=None, 
     help="Filtra por fórmula química (ej: SiO2). Si se omite, calcula todos los materiales."
 )
+parser.add_argument(
+    '-i', '--information', 
+    type=str, 
+    default="./dielectricos_absolutamente_todo.csv", 
+    help="Define el archivo de donde sacar la información, tiene que tener como claves: material_id, formula_pretty, e_total"
+)
 args = parser.parse_args()
-
-print(args.formula)
 
 # ==========================================
 # EJECUCIÓN Y GUARDADO EN PICKLE
@@ -33,7 +42,7 @@ carpeta_resultados = "resultados_rcwa"
 os.makedirs(carpeta_resultados, exist_ok=True)
 
 # 2. Cargar el CSV
-df_materiales = pd.read_csv('./dielectricos_absolutamente_todo.csv')
+df_materiales = pd.read_csv(args.information)
 
 # 3. Filtrar por fórmula si el usuario pasó el argumento
 if args.formula:
@@ -54,6 +63,7 @@ for index, fila in df_materiales.iterrows():
     mat_id = fila['material_id']
     compuesto = fila['formula_pretty']  # Usamos la fórmula bonita (ej: SiO2)
     valor_dielectrico = fila['e_total']
+    thickness = fila['thickness'] if args.thickness else 0.2
     
     # Ignorar si no hay valor dieléctrico
     if pd.isna(valor_dielectrico):
@@ -70,10 +80,10 @@ for index, fila in df_materiales.iterrows():
     print(f"\nCalculando: {mat_id} - {compuesto} (e_total={valor_dielectrico})")
     
     # Calcular
-    transmision_plate = calculate_freq_respect_kxs(n_total=valor_dielectrico, pattern=plate_pattern)
-    transmision_rod = calculate_freq_respect_kxs(n_total=valor_dielectrico, pattern=rod_pattern)
-    transmision_rangle_plate = calculate_freq_respect_angle(n_total=valor_dielectrico, pattern=plate_pattern) if args.rangulo else None
-    transmision_rangle_rod = calculate_freq_respect_angle(n_total=valor_dielectrico, pattern=rod_pattern) if args.rangulo else None
+    transmision_plate = calculate_freq_respect_kxs(n_total=valor_dielectrico, pattern=plate_pattern, thickness = thickness)
+    transmision_rod = calculate_freq_respect_kxs(n_total=valor_dielectrico, pattern=rod_pattern, thickness = thickness)
+    transmision_rangle_plate = calculate_freq_respect_angle(n_total=valor_dielectrico, pattern=plate_pattern, thickness = thickness) if args.rangulo else None
+    transmision_rangle_rod = calculate_freq_respect_angle(n_total=valor_dielectrico, pattern=rod_pattern, thickness = thickness) if args.rangulo else None
     
     # Guardar en pickle
     with open(nombre_archivo, 'wb') as f:
