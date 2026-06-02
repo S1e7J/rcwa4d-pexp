@@ -2,6 +2,7 @@ import pickle
 import numpy as np
 import os
 import argparse
+import re
 from glob import glob
 from datetime import datetime
 import matplotlib.pyplot as plt
@@ -281,7 +282,7 @@ def generar_reporte_latex_modular(datos_procesados, directorio_base):
         r"\begin{document}",
         r"",
         r"\title{Resultados de Simulación RCWA - Comparativa de Geometrías y Rotaciones}",
-        r"\author{Sergio Montoya Ramirez (Reporte Automatizado)}",
+        r"\author{Sergio Montoya (Reporte Automatizado)}",
         r"\date{\today}",
         r"\maketitle",
         r"",
@@ -307,28 +308,53 @@ def generar_reporte_latex_modular(datos_procesados, directorio_base):
 # ==========================================
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generar reportes de simulaciones RCWA.")
-    parser.add_argument('--rangle', action='store_true', help="Procesar también los archivos de rotación (rangle.pkl) y generar sus gráficas.")
+    parser.add_argument('-p', '--pattern', type=str, default=r'.*\.pkl$', help="Patrón regex para filtrar los archivos a procesar dentro de 'resultados_rcwa/'.")
+    parser.add_argument('--rangle', action='store_true', help="Procesar también la data de rotación en los archivos seleccionados y generar gráficas rangle.")
     args = parser.parse_args()
 
+    # Compilar el regex
+    try:
+        regex_pattern = re.compile(args.pattern)
+    except re.error as e:
+        print(f"Error en el patrón de expresión regular: {e}")
+        exit(1)
+
+    dir_resultados = "resultados_rcwa"
+    if not os.path.exists(dir_resultados):
+        print(f"Error: El directorio '{dir_resultados}' no existe. Asegúrate de estar en la ruta correcta.")
+        exit(1)
+
+    # Filtrar archivos usando regex
+    todos_archivos = os.listdir(dir_resultados)
+    archivos_pkl = [os.path.join(dir_resultados, f) for f in todos_archivos if regex_pattern.search(f)]
+    archivos_pkl.sort() # Ordenar alfabéticamente por limpieza visual
+
+    if not archivos_pkl:
+        print(f"No se encontraron archivos en '{dir_resultados}/' que coincidan con el patrón: '{args.pattern}'")
+        exit(0)
+
+    # Confirmación del usuario
+    print(f"\nSe encontraron {len(archivos_pkl)} archivo(s) para procesar:")
+    for archivo in archivos_pkl:
+        print(f"  - {archivo}")
+        
+    confirmacion = input("\n¿Deseas continuar y generar el reporte para estos archivos? (s/n): ").strip().lower()
+    
+    if confirmacion not in ['s', 'si', 'y', 'yes']:
+        print("Operación cancelada.")
+        exit(0)
+
+    # Setup de directorios
     today = datetime.now().strftime("%Y_%m_%d")
     directorio_base = f"reportes/{today}"
     dir_figures = os.path.join(directorio_base, "figures")
     
     os.makedirs(directorio_base, exist_ok=True)
     os.makedirs(dir_figures, exist_ok=True)
-    
-    # Filtrar archivos según la flag
-    if args.rangle:
-        archivos_pkl = glob("resultados_rcwa/*rangle.pkl")
-        print("Modo RANGLE activado. Procesando archivos *rangle.pkl ...")
-    else:
-        # Si no está la flag, procesamos todos los pkl excepto los rangle para evitar errores
-        archivos_pkl = [f for f in glob("resultados_rcwa/*.pkl") if not f.endswith('rangle.pkl')]
-        print("Modo estándar. Procesando archivos *.pkl (omitiendo rotaciones)...")
 
+    # Ejecución principal
     datos_procesados = []
-
-    print("Procesando simulaciones y generando gráficos. Esto puede tomar unos segundos...")
+    print("\nProcesando simulaciones y generando gráficos. Esto puede tomar unos segundos...")
     
     for archivo in archivos_pkl:
         resultado = analizar_para_reporte(archivo, dir_figures, procesar_rangle=args.rangle)
@@ -338,5 +364,4 @@ if __name__ == "__main__":
     if datos_procesados:
         generar_reporte_latex_modular(datos_procesados, directorio_base)
     else:
-        print("No se encontraron datos válidos para generar el reporte.")
-
+        print("No se encontraron datos válidos para generar el reporte en los archivos seleccionados.")
