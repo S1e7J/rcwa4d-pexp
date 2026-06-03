@@ -6,7 +6,7 @@ import re
 import numpy as np
 import matplotlib.pyplot as plt
 from datetime import datetime
-from util import * # Asumiendo que aquí están plate_pattern, rod_pattern, etc.
+from util import *
 
 # --- CONFIGURACIÓN GLOBAL PARA REPORTES ---
 plt.switch_backend('Agg') 
@@ -79,9 +79,76 @@ def formatear_celda_bg(rangos):
 # LÓGICA DE LOS SUBCOMANDOS
 # ==========================================
 
+def handle_generate_ranges(args):
+    output_dir = "ranges"
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # np.arange no incluye el límite superior, le sumamos la mitad del paso para asegurar que incluya 'fin'
+    radios = np.arange(args.inicio, args.fin + (args.paso / 2), args.paso)
+    
+    print(f"\nIniciando generación de {len(radios)} archivos en el directorio '{output_dir}'...")
+    
+    for r in radios:
+        r_clean = round(r, 4) # Evita errores de precisión flotante en los nombres
+        filename = os.path.join(output_dir, f"eps_radio_{r_clean}.pkl")
+        
+        # Llamamos a la función que ya importaste desde util
+        generate_eps_pickle(filename, radius=r)
+        
+    print("¡Generación de rangos terminada!\n")
+
 def handle_simulate(args):
     carpeta_resultados = "resultados_rcwa"
     os.makedirs(carpeta_resultados, exist_ok=True)
+
+    # --- NUEVA LÓGICA: Si se especifica un directorio de archivos pickle customizados ---
+    if args.dir_pickles:
+        if not os.path.exists(args.dir_pickles):
+            print(f"Error: El directorio de pickles especificado '{args.dir_pickles}' no existe.")
+            return
+        
+        # Buscar todos los archivos .pickle o .pkl en ese directorio
+        archivos_custom = [f for f in os.listdir(args.dir_pickles) if f.endswith('.pickle') or f.endswith('.pkl')]
+        
+        if not archivos_custom:
+            print(f"No se encontraron archivos .pickle o .pkl en '{args.dir_pickles}'.")
+            return
+            
+        print(f"Total de perfiles customizados a calcular desde directorio: {len(archivos_custom)}")
+        
+        for archivo in archivos_custom:
+            ruta_pickle = os.path.join(args.dir_pickles, archivo)
+            nombre_base = os.path.splitext(archivo)[0] # Nombre sin extensión (ej: 'eps_radio_0.25')
+            
+            nombre_archivo_salida = f"{carpeta_resultados}/custom_{nombre_base}{'_rangle' if args.rangulo else ''}.pkl"
+            if os.path.exists(nombre_archivo_salida):
+                print(f"Saltando {archivo} - Ya existe resultado."); continue
+                
+            print(f"\nCalculando perfil customizado desde archivo: {archivo}...")
+            
+            # Creamos el lambda que intercepta los argumentos.
+            # Ignora 'n_total' porque la matriz eps ya viene dada dentro del archivo pickle cargado por plate_pattern
+            custom_pattern_lambda = lambda n_total=None, thickness=0.2: custom_pattern(ruta_pickle, thickness=thickness)
+            
+            # El grosor por defecto será 0.2 a menos que se use un valor fijo (o el script maneje otra lógica)
+            thickness_sim = 0.2 
+            
+            datos = {
+                'material_id': f"custom_{nombre_base}", 
+                'formula': f"Custom ({nombre_base})", 
+                'e_total': None, # No viene de un CSV de dieléctricos, es una geometría arbitraria
+                'archivo_origen_pickle': archivo, # <--- Agregado el nombre del pickle representación al diccionario
+                'transmision_plate': calculate_freq_respect_kxs(pattern=custom_pattern_lambda, thickness=thickness_sim),
+                'transmision_rangle_plate': calculate_freq_respect_angle(pattern=custom_pattern_lambda, thickness=thickness_sim) if args.rangulo else None,
+            }
+            
+            with open(nombre_archivo_salida, 'wb') as f: 
+                pickle.dump(datos, f)
+                
+        print("\n¡Simulaciones de perfiles customizados terminadas!")
+        return # Terminamos aquí para que no intente correr el CSV si se llamó este modo
+
+    # --- LÓGICA ORIGINAL: Simulación basada en el CSV de materiales ---
     df_materiales = pd.read_csv(args.information)
 
     if args.formula:
@@ -103,10 +170,11 @@ def handle_simulate(args):
         print(f"\nCalculando: {mat_id} - {compuesto}...")
         datos = {
             'material_id': mat_id, 'formula': compuesto, 'e_total': valor_dielectrico,
-            'transmision_plate': calculate_freq_respect_kxs(valor_dielectrico, plate_pattern, thickness),
-            'transmision_rod': calculate_freq_respect_kxs(valor_dielectrico, rod_pattern, thickness),
-            'transmision_rangle_plate': calculate_freq_respect_angle(valor_dielectrico, plate_pattern, thickness) if args.rangulo else None,
-            'transmision_rangle_rod': calculate_freq_respect_angle(valor_dielectrico, rod_pattern, thickness) if args.rangulo else None
+            'archivo_origen_pickle': None, # No aplica para el flujo estándar
+            'transmision_plate': calculate_freq_respect_kxs(n_total=valor_dielectrico, pattern=plate_pattern, thickness=thickness),
+            'transmision_rod': calculate_freq_respect_kxs(n_total=valor_dielectrico, pattern=rod_pattern, thickness=thickness),
+            'transmision_rangle_plate': calculate_freq_respect_angle(n_total=valor_dielectrico, pattern=plate_pattern, thickness=thickness) if args.rangulo else None,
+            'transmision_rangle_rod': calculate_freq_respect_angle(n_total=valor_dielectrico, pattern=rod_pattern, thickness=thickness) if args.rangulo else None
         }
         with open(nombre_archivo, 'wb') as f: pickle.dump(datos, f)
     print("\n¡Simulaciones terminadas!")
@@ -157,7 +225,7 @@ def handle_report(args):
 # MAIN CON SUBCOMANDOS
 # ==========================================
 
-if __name__ == "__main__":
+def process():
     parser = argparse.ArgumentParser(description="Herramienta RCWA de Sergio Montoya")
     subparsers = parser.add_subparsers(dest="command", help="Comandos disponibles")
 
@@ -167,11 +235,18 @@ if __name__ == "__main__":
     sim_parser.add_argument('-t', '--thickness', action='store_true', help="Usa grosor del CSV")
     sim_parser.add_argument('-f', '--formula', type=str, nargs='+', help="Filtra por fórmula")
     sim_parser.add_argument('-i', '--information', type=str, default="./dielectricos_absolutamente_todo.csv")
+    sim_parser.add_argument('-d', '--dir_pickles', type=str, default=None, help="Directorio con archivos .pickle/.pkl de geometrías eps personalizadas")
 
     # Subcomando: report
     rep_parser = subparsers.add_parser('report', help='Genera reporte LaTeX e imágenes')
     rep_parser.add_argument('-p', '--pattern', type=str, default=r'.*\.pkl$', help="Regex para archivos pkl")
     rep_parser.add_argument('--rangle', action='store_true', help="Procesar datos de rotación")
+
+    # Subcomando: generate_ranges
+    gen_parser = subparsers.add_parser('generate_ranges', help='Genera archivos pickle para un rango de radios')
+    gen_parser.add_argument('inicio', type=float, help='Radio inicial')
+    gen_parser.add_argument('fin', type=float, help='Radio final')
+    gen_parser.add_argument('paso', type=float, help='Tamaño del paso entre radios')
 
     args = parser.parse_args()
 
@@ -179,5 +254,7 @@ if __name__ == "__main__":
         handle_simulate(args)
     elif args.command == 'report':
         handle_report(args)
+    elif args.command == 'generate_ranges':
+        handle_generate_ranges(args)
     else:
         parser.print_help()
