@@ -102,7 +102,13 @@ def handle_simulate(args):
     os.makedirs(carpeta_resultados, exist_ok=True)
 
     # --- 1. LECTURA DEL CSV (Se mueve al inicio para que ambas lógicas lo aprovechen) ---
-    df_materiales = pd.read_csv(args.information)
+    if args.information.endswith('.ods'):
+        # Lee el ODS (requiere tener instalado 'odfpy')
+        df_materiales = pd.read_excel(args.information, engine='odf')
+    else:
+        # Comportamiento por defecto (CSV)
+        df_materiales = pd.read_csv(args.information)
+
 
     if args.formula:
         df_materiales = df_materiales[df_materiales['formula_pretty'].isin(args.formula)]
