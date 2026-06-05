@@ -28,11 +28,13 @@ def plate_pattern(n_total: number = 4, thickness = 0.2):
     
     return eps, thickness, freqs, twists, kxs, ind, NM, NMNM
 
-def custom_pattern(pickle_filepath: str, thickness = 0.2):
+def custom_pattern(pickle_filepath: str, n_total=4, thickness = 0.2):
     # Cargar la matriz eps desde el archivo pickle
     with open(pickle_filepath, 'rb') as f:
         eps = pickle.load(f)
     
+    eps = eps * n_total
+    eps[eps == 0] = 1
     ind = 1
     NM = (2*ind+1)**2
     NMNM = NM**2
@@ -105,14 +107,14 @@ def generate_eps_pickle(filename: str, radius: float, n_total: float = 4, Nx: in
     Genera la matriz eps con un radio específico y la guarda como un archivo pickle.
     """
     # Crear la matriz
-    eps = np.ones([Ny, Nx]) * n_total 
+    eps = np.ones([Ny, Nx])
     
     # Crear la malla
     xs, ys = np.linspace(-0.5, 0.5, Nx), np.linspace(-0.5, 0.5, Ny)
     xs, ys = np.meshgrid(xs, ys)
     
     # Aplicar la condición del círculo
-    eps[xs**2 + ys**2 < radius**2] = 1 
+    eps[xs**2 + ys**2 < radius**2] = 0
     
     # Guardar en formato pickle
     with open(filename, 'wb') as f:

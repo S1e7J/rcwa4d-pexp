@@ -101,82 +101,102 @@ def handle_simulate(args):
     carpeta_resultados = "resultados_rcwa"
     os.makedirs(carpeta_resultados, exist_ok=True)
 
-    # --- NUEVA LÓGICA: Si se especifica un directorio de archivos pickle customizados ---
+    # --- 1. LECTURA DEL CSV (Se mueve al inicio para que ambas lógicas lo aprovechen) ---
+    df_materiales = pd.read_csv(args.information)
+
+    if args.formula:
+        df_materiales = df_materiales[df_materiales['formula_pretty'].isin(args.formula)]
+        if df_materiales.empty:
+            print(f"No se encontró el compuesto '{args.formula}' en el CSV.")
+            return
+
+    # --- 2. LÓGICA NUEVA: Directorio de archivos pickle customizados ---
     if args.dir_pickles:
         if not os.path.exists(args.dir_pickles):
             print(f"Error: El directorio de pickles especificado '{args.dir_pickles}' no existe.")
             return
         
         # Buscar todos los archivos .pickle o .pkl en ese directorio
-        archivos_custom = [f for f in os.listdir(args.dir_pickles) if f.endswith('.pickle') or f.endswith('.pkl')]
+        archivos_custom = [f for f in os.listdir(args.dir_pickles) if f.endswith(('.pickle', '.pkl'))]
         
         if not archivos_custom:
             print(f"No se encontraron archivos .pickle o .pkl en '{args.dir_pickles}'.")
             return
             
-        print(f"Total de perfiles customizados a calcular desde directorio: {len(archivos_custom)}")
+        print(f"Calculando {len(archivos_custom)} perfiles customizados para {len(df_materiales)} materiales...")
         
         for archivo in archivos_custom:
             ruta_pickle = os.path.join(args.dir_pickles, archivo)
-            nombre_base = os.path.splitext(archivo)[0] # Nombre sin extensión (ej: 'eps_radio_0.25')
+            nombre_base = os.path.splitext(archivo)[0]
             
-            nombre_archivo_salida = f"{carpeta_resultados}/custom_{nombre_base}{'_rangle' if args.rangulo else ''}.pkl"
-            if os.path.exists(nombre_archivo_salida):
-                print(f"Saltando {archivo} - Ya existe resultado."); continue
+            for _, fila in df_materiales.iterrows():
+                mat_id = fila['material_id']
+                compuesto = fila['formula_pretty']
+                valor_dielectrico = fila['e_total']
+                thickness_sim = fila['thickness'] if args.thickness else 0.2
                 
-            print(f"\nCalculando perfil customizado desde archivo: {archivo}...")
-            
-            # Creamos el lambda que intercepta los argumentos.
-            # Ignora 'n_total' porque la matriz eps ya viene dada dentro del archivo pickle cargado por plate_pattern
-            custom_pattern_lambda = lambda n_total=None, thickness=0.2: custom_pattern(ruta_pickle, thickness=thickness)
-            
-            # El grosor por defecto será 0.2 a menos que se use un valor fijo (o el script maneje otra lógica)
-            thickness_sim = 0.2 
-            
-            datos = {
-                'material_id': f"custom_{nombre_base}", 
-                'formula': f"Custom ({nombre_base})", 
-                'e_total': None, # No viene de un CSV de dieléctricos, es una geometría arbitraria
-                'archivo_origen_pickle': archivo, # <--- Agregado el nombre del pickle representación al diccionario
-                'transmision_plate': calculate_freq_respect_kxs(pattern=custom_pattern_lambda, thickness=thickness_sim),
-                'transmision_rangle_plate': calculate_freq_respect_angle(pattern=custom_pattern_lambda, thickness=thickness_sim) if args.rangulo else None,
-            }
-            
-            with open(nombre_archivo_salida, 'wb') as f: 
-                pickle.dump(datos, f)
+                # Omitir si no hay valor dieléctrico
+                if pd.isna(valor_dielectrico): 
+                    continue
+                    
+                nombre_archivo_salida = f"{carpeta_resultados}/{mat_id}_custom_{nombre_base}{'_rangle' if args.rangulo else ''}.pkl"
                 
+                if os.path.exists(nombre_archivo_salida):
+                    print(f"Saltando {archivo} con {mat_id} - Ya existe resultado.")
+                    continue
+                    
+                print(f"\nCalculando perfil customizado '{archivo}' para {mat_id} ({compuesto})...")
+                
+                # Se pasa el valor del dieléctrico extraído del CSV al lambda
+                custom_pattern_lambda = lambda n_total=valor_dielectrico, thickness=thickness_sim: custom_pattern(ruta_pickle, n_total=n_total, thickness=thickness)
+                
+                datos = {
+                    'material_id': mat_id, 
+                    'formula': compuesto, 
+                    'e_total': valor_dielectrico, 
+                    'archivo_origen_pickle': archivo, 
+                    'transmision_plate': calculate_freq_respect_kxs(n_total=valor_dielectrico, pattern=custom_pattern_lambda, thickness=thickness_sim),
+                    'transmision_rangle_plate': calculate_freq_respect_angle(n_total=valor_dielectrico, pattern=custom_pattern_lambda, thickness=thickness_sim) if args.rangulo else None,
+                }
+                
+                with open(nombre_archivo_salida, 'wb') as f: 
+                    pickle.dump(datos, f)
+                    
         print("\n¡Simulaciones de perfiles customizados terminadas!")
-        return # Terminamos aquí para que no intente correr el CSV si se llamó este modo
+        return # Terminamos aquí para que no intente correr el flujo estándar si se llamó este modo
 
-    # --- LÓGICA ORIGINAL: Simulación basada en el CSV de materiales ---
-    df_materiales = pd.read_csv(args.information)
-
-    if args.formula:
-        df_materiales = df_materiales[df_materiales['formula_pretty'].isin(args.formula)]
-        if df_materiales.empty:
-            print(f"No se encontró el compuesto '{args.formula}' en el CSV."); return
-
-    print(f"Total de materiales a calcular: {len(df_materiales)}")
+    # --- 3. LÓGICA ORIGINAL: Simulación estándar basada en el CSV de materiales ---
+    print(f"Total de materiales a calcular con geometrías estándar: {len(df_materiales)}")
 
     for _, fila in df_materiales.iterrows():
-        mat_id, compuesto, valor_dielectrico = fila['material_id'], fila['formula_pretty'], fila['e_total']
+        mat_id = fila['material_id']
+        compuesto = fila['formula_pretty']
+        valor_dielectrico = fila['e_total']
         thickness = fila['thickness'] if args.thickness else 0.2
-        if pd.isna(valor_dielectrico): continue
+        
+        if pd.isna(valor_dielectrico): 
+            continue
         
         nombre_archivo = f"{carpeta_resultados}/{mat_id}_{compuesto}{'_rangle' if args.rangulo else ''}.pkl"
         if os.path.exists(nombre_archivo):
-            print(f"Saltando {mat_id} - Ya existe."); continue
+            print(f"Saltando {mat_id} - Ya existe."); 
+            continue
             
         print(f"\nCalculando: {mat_id} - {compuesto}...")
         datos = {
-            'material_id': mat_id, 'formula': compuesto, 'e_total': valor_dielectrico,
-            'archivo_origen_pickle': None, # No aplica para el flujo estándar
+            'material_id': mat_id, 
+            'formula': compuesto, 
+            'e_total': valor_dielectrico,
+            'archivo_origen_pickle': None, 
             'transmision_plate': calculate_freq_respect_kxs(n_total=valor_dielectrico, pattern=plate_pattern, thickness=thickness),
             'transmision_rod': calculate_freq_respect_kxs(n_total=valor_dielectrico, pattern=rod_pattern, thickness=thickness),
             'transmision_rangle_plate': calculate_freq_respect_angle(n_total=valor_dielectrico, pattern=plate_pattern, thickness=thickness) if args.rangulo else None,
             'transmision_rangle_rod': calculate_freq_respect_angle(n_total=valor_dielectrico, pattern=rod_pattern, thickness=thickness) if args.rangulo else None
         }
-        with open(nombre_archivo, 'wb') as f: pickle.dump(datos, f)
+        
+        with open(nombre_archivo, 'wb') as f: 
+            pickle.dump(datos, f)
+            
     print("\n¡Simulaciones terminadas!")
 
 def handle_report(args):
